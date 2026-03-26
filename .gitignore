@@ -1,0 +1,14 @@
+
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+
+# Terraform binaries
+terraform/.terraform/
+
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+
+# Terraform binaries
+terraform/.terraform/

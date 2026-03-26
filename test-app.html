@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TaskFlow Test App</title>
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.6/dist/amazon-cognito-identity.min.js"></script>
+    <style>
+        body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .section { margin: 30px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
+        button { padding: 10px 20px; margin: 5px; background: #FF9900; color: white; border: none; cursor: pointer; }
+        input { padding: 8px; margin: 5px; width: 300px; }
+        .output { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; font-family: monospace; white-space: pre-wrap; }
+        .error { color: red; }
+        .success { color: green; }
+        h2 { color: #232F3E; }
+    </style>
+</head>
+<body>
+    <h1>🚀 TaskFlow API Tester</h1>
+    
+    <!-- SECTION 1: Sign Up -->
+    <div class="section">
+        <h2>1. Sign Up (Create New User)</h2>
+        <input type="email" id="signupEmail" placeholder="Email" value="test@example.com"><br>
+        <input type="password" id="signupPassword" placeholder="Password (min 8 chars)" value="Test123!"><br>
+        <button onclick="signUp()">Sign Up</button>
+        <div id="signupResult" class="output"></div>
+    </div>
+
+    <!-- SECTION 2: Log In -->
+    <div class="section">
+        <h2>2. Log In</h2>
+        <input type="email" id="loginEmail" placeholder="Email" value="test@example.com"><br>
+        <input type="password" id="loginPassword" placeholder="Password" value="Test123!"><br>
+        <button onclick="login()">Log In</button>
+        <div id="loginResult" class="output"></div>
+    </div>
+
+    <!-- SECTION 3: Create Task -->
+    <div class="section">
+        <h2>3. Create Task</h2>
+        <input type="text" id="taskTitle" placeholder="Task title" value="Buy groceries"><br>
+        <button onclick="createTask()">Create Task</button>
+        <div id="createResult" class="output"></div>
+    </div>
+
+    <!-- SECTION 4: Get Tasks -->
+    <div class="section">
+        <h2>4. View My Tasks</h2>
+        <button onclick="getTasks()">Get All My Tasks</button>
+        <div id="getResult" class="output"></div>
+    </div>
+
+    <!-- SECTION 5: Break Things -->
+    <div class="section">
+        <h2>5. Test Error Handling</h2>
+        <button onclick="testBadRequest()">Test: Missing Title</button>
+        <button onclick="testUnauthorized()">Test: No Auth Token</button>
+        <button onclick="testInvalidToken()">Test: Invalid Token</button>
+        <div id="errorResult" class="output"></div>
+    </div>
+
+    <script>
+        const API_URL = 'https://nqo9rfa75i.execute-api.us-east-1.amazonaws.com/prod/tasks';
+        const USER_POOL_ID = 'us-east-1_aDIe8E716';
+        const CLIENT_ID = '3reh23h5v37dqguo21jl979f8k';
+        
+        let authToken = null;
+
+        // Configure Cognito
+        const poolData = {
+            UserPoolId: USER_POOL_ID,
+            ClientId: CLIENT_ID
+        };
+        const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+
+        // SIGN UP
+        function signUp() {
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            
+            const attributeList = [
+                new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })
+            ];
+
+            userPool.signUp(email, password, attributeList, null, (err, result) => {
+                if (err) {
+                    document.getElementById('signupResult').innerHTML = 
+                        '<span class="error">❌ Error: ' + err.message + '</span>';
+                    return;
+                }
+                document.getElementById('signupResult').innerHTML = 
+                    '<span class="success">✅ Sign up successful! User: ' + result.user.getUsername() + 
+                    '\n\nℹ️ Check your email for verification code (or I can show you how to skip this)</span>';
+            });
+        }
+
+        // LOG IN
+        function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            const authenticationData = {
+                Username: email,
+                Password: password,
+            };
+            const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails(authenticationData);
+
+            const userData = {
+                Username: email,
+                Pool: userPool
+            };
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+
+            cognitoUser.authenticateUser(authenticationDetails, {
+                onSuccess: (result) => {
+                    authToken = result.getIdToken().getJwtToken();
+                    document.getElementById('loginResult').innerHTML = 
+                        '<span class="success">✅ Login successful!</span>\n\nYour JWT Token (saved in memory):\n' + 
+                        authToken.substring(0, 50) + '...[truncated]';
+                },
+                onFailure: (err) => {
+                    document.getElementById('loginResult').innerHTML = 
+                        '<span class="error">❌ Error: ' + err.message + '</span>';
+                }
+            });
+        }
+
+        // CREATE TASK
+        async function createTask() {
+            if (!authToken) {
+                document.getElementById('createResult').innerHTML = 
+                    '<span class="error">❌ Please log in first!</span>';
+                return;
+            }
+
+            const title = document.getElementById('taskTitle').value;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': authToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ title: title })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('createResult').innerHTML = 
+                        '<span class="success">✅ Task created!</span>\n\n' + JSON.stringify(data, null, 2);
+                } else {
+                    document.getElementById('createResult').innerHTML = 
+                        '<span class="error">❌ Error ' + response.status + '</span>\n\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                document.getElementById('createResult').innerHTML = 
+                    '<span class="error">❌ Network Error: ' + error.message + '</span>';
+            }
+        }
+
+        // GET TASKS
+        async function getTasks() {
+            if (!authToken) {
+                document.getElementById('getResult').innerHTML = 
+                    '<span class="error">❌ Please log in first!</span>';
+                return;
+            }
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': authToken
+                    }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.length === 0) {
+                        document.getElementById('getResult').innerHTML = 
+                            '<span class="success">✅ Success! But no tasks yet.</span>\n\nCreate some tasks first!';
+                    } else {
+                        document.getElementById('getResult').innerHTML = 
+                            '<span class="success">✅ Found ' + data.length + ' task(s)!</span>\n\n' + 
+                            JSON.stringify(data, null, 2);
+                    }
+                } else {
+                    document.getElementById('getResult').innerHTML = 
+                        '<span class="error">❌ Error ' + response.status + '</span>\n\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                document.getElementById('getResult').innerHTML = 
+                    '<span class="error">❌ Network Error: ' + error.message + '</span>';
+            }
+        }
+
+        // TEST: Missing title
+        async function testBadRequest() {
+            if (!authToken) {
+                document.getElementById('errorResult').innerHTML = 
+                    '<span class="error">❌ Please log in first!</span>';
+                return;
+            }
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': authToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ title: '' })  // Empty title - should fail
+                });
+
+                const data = await response.json();
+                document.getElementById('errorResult').innerHTML = 
+                    '📝 Test: Empty Title\n\nStatus: ' + response.status + '\n\n' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('errorResult').innerHTML = 
+                    '<span class="error">❌ Error: ' + error.message + '</span>';
+            }
+        }
+
+        // TEST: No auth token
+        async function testUnauthorized() {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'GET'
+                    // NO Authorization header
+                });
+
+                const data = await response.json();
+                document.getElementById('errorResult').innerHTML = 
+                    '📝 Test: No Auth Token\n\nStatus: ' + response.status + '\n\n' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('errorResult').innerHTML = 
+                    '<span class="error">❌ Error: ' + error.message + '</span>';
+            }
+        }
+
+        // TEST: Invalid token
+        async function testInvalidToken() {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': 'fake-invalid-token-12345'
+                    }
+                });
+
+                const data = await response.json();
+                document.getElementById('errorResult').innerHTML = 
+                    '📝 Test: Invalid Token\n\nStatus: ' + response.status + '\n\n' + JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('errorResult').innerHTML = 
+                    '<span class="error">❌ Error: ' + error.message + '</span>';
+            }
+        }
+    </script>
+</body>
+</html>
