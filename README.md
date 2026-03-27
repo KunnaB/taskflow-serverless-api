@@ -251,3 +251,4 @@ Team receives SNS emails for:
 - Successful deployments
 - Rollback events
 - CloudWatch alarm triggers
+# CI/CD Pipeline Active
