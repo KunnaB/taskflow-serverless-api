@@ -138,3 +138,116 @@ Alarms trigger if error rates exceed thresholds or latency degrades.
 **Akunna Ndubuisi**  
 AWS Certified Solutions Architect  
 Built as a demonstration of serverless architecture patterns and Infrastructure as Code
+
+---
+
+## CI/CD Pipeline
+
+This project includes automated deployment pipelines that ensure code quality and safe production releases.
+
+### CI/CD Architecture
+
+![CI/CD Pipeline](docs/cicd-architecture.png)
+*Automated deployment flow: GitHub → Tests → Staging → Production with auto-rollback*
+
+### Pipeline Overview
+
+**Two separate pipelines:**
+
+1. **App Pipeline** - Deploys Lambda function code changes
+2. **Infra Pipeline** - Deploys Terraform infrastructure changes
+
+### App Pipeline Flow
+```
+Developer pushes code
+    ↓
+GitHub Actions triggered
+    ↓
+Run unit tests + integration tests
+    ↓
+[Tests pass] → Deploy to staging Lambda alias
+    ↓
+Run smoke tests on staging
+    ↓
+[Smoke tests pass] → Deploy to production
+    ↓
+Gradual traffic shift (10% → 50% → 100%)
+    ↓
+CloudWatch monitors errors/latency
+    ↓
+[If errors spike] → Auto-rollback to previous version
+    ↓
+SNS email notification sent to team
+```
+
+### Key Features
+
+**Pull Request Gate:**
+- All code must pass tests before merge to main
+- Terraform changes show plan in PR comments
+- Protected main branch (no direct pushes)
+
+**Lambda Versioning:**
+- Every deployment creates a new Lambda version
+- Production uses aliases to point to current version
+- Rollback = switching alias to previous version (10 seconds vs 3 hours)
+
+**Gradual Traffic Shifting:**
+- New version gets 10% traffic initially
+- Increases to 50% after 30 seconds
+- Full cutover to 100% if healthy
+- Automatic rollback if errors detected
+
+**Monitoring & Alerts:**
+- CloudWatch alarms on Lambda errors > 5 in 5 minutes
+- CloudWatch alarms on API Gateway 5xx > 10 in 5 minutes
+- SNS email notifications for deployment events
+
+**Security:**
+- OIDC authentication (no stored AWS keys)
+- Least-privilege IAM role for GitHub Actions
+- Scoped permissions (only specific Lambda functions)
+
+### Testing Strategy
+
+**Unit Tests:**
+- Validate Lambda function logic
+- Test input validation and error handling
+- Run on every PR and push
+
+**Integration Tests:**
+- Verify API Gateway is reachable
+- Check CORS configuration
+- Test authentication requirements
+
+**Smoke Tests:**
+- Run after staging deployment
+- Verify critical endpoints respond
+- Gate for production deployment
+
+### What This Solves
+
+**Before CI/CD:**
+- Manual deployments via AWS Console
+- No test automation
+- 3-hour rollback after bad deployment
+- No visibility into which version was deployed
+
+**After CI/CD:**
+- Automated testing on every code change
+- Staging environment validates changes first
+- 10-second rollback via Lambda aliases
+- Full version history and traceability
+
+### Workflows
+
+**App Pipeline:** `.github/workflows/app-pipeline.yml`
+**Infra Pipeline:** `.github/workflows/infra-pipeline.yml`
+
+### Deployment Notifications
+
+Team receives SNS emails for:
+- Pipeline failures
+- Successful deployments
+- Rollback events
+- CloudWatch alarm triggers
