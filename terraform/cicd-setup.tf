@@ -70,7 +70,8 @@ resource "aws_iam_role_policy" "github_actions_policy" {
         Effect = "Allow"
         Action = [
           "cloudwatch:GetMetricStatistics",
-          "cloudwatch:ListMetrics"
+          "cloudwatch:ListMetrics",
+          "cloudwatch:DescribeAlarms"
         ]
         Resource = "*"
       },
@@ -101,7 +102,7 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = "akunnas.tests@gmail.com"  #CHANGE THIS
 }
 
-# CloudWatch Alarm for Lambda Errors
+# CloudWatch Alarm for Lambda Errors (all 5 taskflow functions)
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   alarm_name          = "taskflow-lambda-errors"
   comparison_operator = "GreaterThanThreshold"
@@ -111,12 +112,10 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 5
-  alarm_description   = "This metric monitors Lambda function errors"
+  alarm_description   = "This metric monitors Lambda function errors across all taskflow functions"
   alarm_actions       = [aws_sns_topic.deployment_notifications.arn]
 
-  dimensions = {
-    FunctionName = "create-task"
-  }
+  # No FunctionName dimension — aggregates errors across all Lambda functions in the account
 }
 
 # CloudWatch Alarm for API Gateway 5xx Errors
