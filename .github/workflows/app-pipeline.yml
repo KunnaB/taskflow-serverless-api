@@ -181,21 +181,121 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
-      - name: Deploy to Production
+      - name: Deploy to Production with gradual traffic shift
         run: |
+          # Get latest versions deployed to staging
           CREATE_VERSION=$(aws lambda list-versions-by-function --function-name create-task --query 'Versions[-1].Version' --output text --region us-east-1)
           GET_VERSION=$(aws lambda list-versions-by-function --function-name get-tasks --query 'Versions[-1].Version' --output text --region us-east-1)
           UPDATE_VERSION=$(aws lambda list-versions-by-function --function-name update-task --query 'Versions[-1].Version' --output text --region us-east-1)
           DELETE_VERSION=$(aws lambda list-versions-by-function --function-name delete-task --query 'Versions[-1].Version' --output text --region us-east-1)
           WORKER_VERSION=$(aws lambda list-versions-by-function --function-name sqs-worker --query 'Versions[-1].Version' --output text --region us-east-1)
-          
-          echo "Deploying to production..."
-          echo "Versions: create=$CREATE_VERSION get=$GET_VERSION update=$UPDATE_VERSION delete=$DELETE_VERSION worker=$WORKER_VERSION"
-          
+
+          # Get current production versions (for rollback)
+          CURRENT_CREATE=$(aws lambda get-alias --function-name create-task --name prod --query 'FunctionVersion' --output text --region us-east-1)
+          CURRENT_GET=$(aws lambda get-alias --function-name get-tasks --name prod --query 'FunctionVersion' --output text --region us-east-1)
+          CURRENT_UPDATE=$(aws lambda get-alias --function-name update-task --name prod --query 'FunctionVersion' --output text --region us-east-1)
+          CURRENT_DELETE=$(aws lambda get-alias --function-name delete-task --name prod --query 'FunctionVersion' --output text --region us-east-1)
+          CURRENT_WORKER=$(aws lambda get-alias --function-name sqs-worker --name prod --query 'FunctionVersion' --output text --region us-east-1)
+
+          echo "Current prod versions - create:$CURRENT_CREATE get:$CURRENT_GET update:$CURRENT_UPDATE delete:$CURRENT_DELETE worker:$CURRENT_WORKER"
+          echo "New versions - create:$CREATE_VERSION get:$GET_VERSION update:$UPDATE_VERSION delete:$DELETE_VERSION worker:$WORKER_VERSION"
+
+          # Function to check CloudWatch error metrics across all functions
+          check_error_rate() {
+            echo "Checking error rates across all functions..."
+            TOTAL_ERRORS=0
+
+            for FUNC in create-task get-tasks update-task delete-task sqs-worker; do
+              ERRORS=$(aws cloudwatch get-metric-statistics \
+                --namespace AWS/Lambda \
+                --metric-name Errors \
+                --dimensions Name=FunctionName,Value=$FUNC \
+                --start-time $(date -u -d '2 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+                --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+                --period 120 \
+                --statistics Sum \
+                --region us-east-1 \
+                --query 'Datapoints[0].Sum' \
+                --output text)
+
+              if [ "$ERRORS" = "None" ] || [ -z "$ERRORS" ]; then
+                ERRORS=0
+              fi
+
+              echo "  $FUNC errors: $ERRORS"
+              TOTAL_ERRORS=$(echo "$TOTAL_ERRORS + $ERRORS" | bc)
+            done
+
+            echo "Total Lambda errors in last 2 minutes: $TOTAL_ERRORS"
+
+            # Rollback if more than 3 total errors across all functions
+            if (( $(echo "$TOTAL_ERRORS > 3" | bc -l) )); then
+              echo "❌ ERROR THRESHOLD EXCEEDED!"
+              return 1
+            fi
+
+            return 0
+          }
+
+          # Helper to apply weighted routing to all functions
+          shift_traffic() {
+            local OLD_WEIGHT=$1
+            aws lambda update-alias --function-name create-task --name prod --function-version $CREATE_VERSION \
+              --routing-config "{\"AdditionalVersionWeights\":{\"$CURRENT_CREATE\":$OLD_WEIGHT}}" --region us-east-1
+            aws lambda update-alias --function-name get-tasks --name prod --function-version $GET_VERSION \
+              --routing-config "{\"AdditionalVersionWeights\":{\"$CURRENT_GET\":$OLD_WEIGHT}}" --region us-east-1
+            aws lambda update-alias --function-name update-task --name prod --function-version $UPDATE_VERSION \
+              --routing-config "{\"AdditionalVersionWeights\":{\"$CURRENT_UPDATE\":$OLD_WEIGHT}}" --region us-east-1
+            aws lambda update-alias --function-name delete-task --name prod --function-version $DELETE_VERSION \
+              --routing-config "{\"AdditionalVersionWeights\":{\"$CURRENT_DELETE\":$OLD_WEIGHT}}" --region us-east-1
+            aws lambda update-alias --function-name sqs-worker --name prod --function-version $WORKER_VERSION \
+              --routing-config "{\"AdditionalVersionWeights\":{\"$CURRENT_WORKER\":$OLD_WEIGHT}}" --region us-east-1
+          }
+
+          # Rollback function
+          rollback() {
+            echo "🔄 ROLLING BACK to previous versions..."
+            aws lambda update-alias --function-name create-task --name prod --function-version $CURRENT_CREATE --region us-east-1
+            aws lambda update-alias --function-name get-tasks --name prod --function-version $CURRENT_GET --region us-east-1
+            aws lambda update-alias --function-name update-task --name prod --function-version $CURRENT_UPDATE --region us-east-1
+            aws lambda update-alias --function-name delete-task --name prod --function-version $CURRENT_DELETE --region us-east-1
+            aws lambda update-alias --function-name sqs-worker --name prod --function-version $CURRENT_WORKER --region us-east-1
+            echo "✅ Rollback complete"
+            exit 1
+          }
+
+          # Start gradual rollout
+          echo "🚀 Starting gradual traffic shift: 10% → 50% → 100%"
+
+          # PHASE 1: 10% traffic to new version across all functions
+          echo "📊 Phase 1: Shifting 10% traffic to new version..."
+          shift_traffic 0.9
+
+          echo "⏳ Monitoring 10% traffic for 30 seconds..."
+          sleep 30
+
+          if ! check_error_rate; then
+            rollback
+          fi
+
+          # PHASE 2: 50% traffic to new version across all functions
+          echo "📊 Phase 2: Shifting 50% traffic to new version..."
+          shift_traffic 0.5
+
+          echo "⏳ Monitoring 50% traffic for 30 seconds..."
+          sleep 30
+
+          if ! check_error_rate; then
+            rollback
+          fi
+
+          # PHASE 3: 100% traffic to new version across all functions
+          echo "📊 Phase 3: Shifting 100% traffic to new version..."
+
           aws lambda update-alias --function-name create-task --name prod --function-version $CREATE_VERSION --region us-east-1
           aws lambda update-alias --function-name get-tasks --name prod --function-version $GET_VERSION --region us-east-1
           aws lambda update-alias --function-name update-task --name prod --function-version $UPDATE_VERSION --region us-east-1
           aws lambda update-alias --function-name delete-task --name prod --function-version $DELETE_VERSION --region us-east-1
           aws lambda update-alias --function-name sqs-worker --name prod --function-version $WORKER_VERSION --region us-east-1
-          
-          echo "✅ Production deployment complete!"
+
+          echo "✅ Gradual rollout complete! All traffic on new version."
