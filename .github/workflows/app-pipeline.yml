@@ -38,6 +38,10 @@ jobs:
       - name: Run unit tests
         run: |
           python3 tests/test_create_task.py
+          python3 tests/test_get_tasks.py
+          python3 tests/test_update_task.py
+          python3 tests/test_delete_task.py
+          python3 tests/test_sqs_worker.py
       
       - name: Run integration tests
         run: |

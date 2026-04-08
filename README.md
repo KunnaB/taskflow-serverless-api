@@ -97,12 +97,35 @@ Rather than building custom authentication, I used Cognito which handles user si
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/tasks` | Create a new task (queued via SQS, returns 202) |
+| GET | `/tasks` | Get all tasks for authenticated user (returns 200) |
+| PATCH | `/tasks/{id}` | Update task status: `complete` or `incomplete` (queued via SQS, returns 202) |
+| DELETE | `/tasks/{id}` | Delete a task (queued via SQS, returns 202) |
+
+All endpoints require `Authorization: Bearer <JWT>` from Cognito. Write operations (POST/PATCH/DELETE) return `202 Accepted` immediately — DynamoDB is updated asynchronously by the SQS worker Lambda.
+
+## Live API
+
+**Base URL:** `https://nqo9rfa75i.execute-api.us-east-1.amazonaws.com/prod`
+
+| Method | Full URL | Description |
+|--------|----------|-------------|
 | POST | `/tasks` | Create a new task |
 | GET | `/tasks` | Get all tasks for authenticated user |
 | PATCH | `/tasks/{id}` | Update task status |
 | DELETE | `/tasks/{id}` | Delete a task |
 
-All endpoints require JWT authentication via Cognito.
+All requests require an `Authorization: Bearer <JWT>` header from Cognito.
+
+## CORS Configuration
+
+CORS is enabled at both the API Gateway and Lambda level:
+
+- **OPTIONS preflight** — handled by API Gateway MOCK integration (no Lambda invocation)
+- **Allowed origins:** `*`
+- **Allowed methods:** `GET, POST, OPTIONS` on `/tasks`; `GET, PATCH, DELETE, OPTIONS` on `/tasks/{id}`
+- **Allowed headers:** `Content-Type, Authorization`
+- Every Lambda response includes `Access-Control-Allow-Origin: *`
 
 ## Deployment
 ```bash
@@ -111,7 +134,7 @@ terraform init
 terraform apply
 ```
 
-Terraform will output the API URL, Cognito User Pool details, and other configuration after deployment.
+Terraform outputs the API URL, Cognito User Pool ID, App Client ID, and SQS Queue URL after deployment.
 
 ## What I Learned
 
@@ -125,13 +148,14 @@ Terraform will output the API URL, Cognito User Pool details, and other configur
 
 ## Monitoring
 
-I configured CloudWatch to track:
-- Lambda execution metrics (invocations, errors, duration)
-- API Gateway request counts and latency
-- SQS queue depth
-- DynamoDB read/write metrics
+CloudWatch alarms are provisioned via Terraform (`terraform/cicd-setup.tf`):
 
-Alarms trigger if error rates exceed thresholds or latency degrades.
+- **`taskflow-lambda-errors`** — triggers if Lambda errors exceed 5 in a 5-minute window
+- **`taskflow-api-5xx-errors`** — triggers if API Gateway 5xx errors exceed 10 in a 5-minute window
+
+Both alarms send SNS email notifications and are checked as the quality gate before every production deployment.
+
+AWS also automatically collects Lambda metrics (invocations, errors, duration, throttles) and API Gateway metrics (request count, latency, 4xx/5xx rates) — visible in CloudWatch Metrics without any additional configuration.
 
 ## Author
 
