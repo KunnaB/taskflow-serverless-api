@@ -178,8 +178,15 @@ This project includes automated deployment pipelines that ensure code quality an
 
 **Two separate pipelines:**
 
-1. **App Pipeline** - Deploys Lambda function code changes
-2. **Infra Pipeline** - Deploys Terraform infrastructure changes
+**App Pipeline (Automated):**
+- Deploys Lambda function code changes
+- Runs on every push to main after tests pass
+- Automated testing, staging validation, and gradual production rollout
+
+**Infrastructure Changes (Manual):**
+- Infrastructure changes (VPC, DynamoDB, API Gateway, IAM) managed via Terraform
+- Deployed manually by running `terraform apply` after senior engineer review
+- Infrequent changes (monthly or less) justify manual approach over automation
 
 ### App Pipeline Flow
 ```
@@ -266,7 +273,7 @@ SNS email notification sent to team
 ### Workflows
 
 **App Pipeline:** `.github/workflows/app-pipeline.yml`
-**Infra Pipeline:** `.github/workflows/infra-pipeline.yml`
+
 
 ### Deployment Notifications
 
