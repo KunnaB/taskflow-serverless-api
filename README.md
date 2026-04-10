@@ -283,5 +283,3 @@ Team receives SNS emails for:
 - Rollback events
 - CloudWatch alarm triggers
 # CI/CD Pipeline Active
-
-# Interview demo Mon 30 Mar 2026 16:57:40 BST
